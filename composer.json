@@ -11,6 +11,7 @@
         "ext-dom": "*",
         "ext-zlib": "*",
         "ext-curl": "*",
+        "ext-pcntl": "*",
         "guzzlehttp/guzzle": "7.4.x-dev",
         "symfony/console": "^6.0",
         "phpunit/phpunit": "^9.5",

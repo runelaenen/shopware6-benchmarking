@@ -3,6 +3,7 @@
 namespace Tideways\Shopware6Benchmarking\Console;
 
 use Symfony\Component\Console\Command\Command;
+use Symfony\Component\Console\Command\SignalableCommandInterface;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
@@ -12,10 +13,11 @@ use Tideways\Shopware6Benchmarking\ExecutionMode;
 use Tideways\Shopware6Benchmarking\GlobalConfiguration;
 use Tideways\Shopware6Benchmarking\Services\SitemapFixturesDownloader;
 
-class RunCommand extends Command
+class RunCommand extends Command implements SignalableCommandInterface
 {
     protected static $defaultName = 'run';
     protected static $defaultDescription = 'Run the Locust Loadtest for benchmarking Shopware based on configuration.';
+    private ?Process $locustProcess = null;
 
     protected function configure(): void
     {
@@ -54,7 +56,7 @@ class RunCommand extends Command
         $command = $this->getLocustCommandBasedOnExecutionMode($globalConfiguration->executionMode, $workingDir);
         $duration = $input->getOption('duration') ?: $config->scenario->duration;
 
-        $locustProcess = new Process(array_merge($command, [
+        $this->locustProcess = new Process(array_merge($command, [
             '--headless',
             '--host=' . $config->scenario->host,
             '-u',
@@ -70,7 +72,7 @@ class RunCommand extends Command
             '--csv-full-history',
             '--print-stats',
         ]));
-        $locustProcess->setEnv([
+        $this->locustProcess->setEnv([
             'SWBENCH_NAME' => $config->getName(),
             'SWBENCH_DATA_DIR' => $config->getDataDirectory(),
             'LOCUST_TIDEWAYS_APIKEY' => $config->tideways->apiKey,
@@ -88,17 +90,17 @@ class RunCommand extends Command
             'SWBENCH_BROWSING_USER_WEIGHT' => 100 - $config->scenario->conversionRatio - $config->scenario->cartAbandonmentRatio,
             'TZ' => 'UTC', // Set timezone to make sure we know how to work with dates later in reporting.
         ]);
-        $locustProcess->setWorkingDirectory($workingDir);
-        $locustProcess->setTimeout(null);
+        $this->locustProcess->setWorkingDirectory($workingDir);
+        $this->locustProcess->setTimeout(null);
 
         $output->writeln("Running benchmark for " . $duration . "...");
 
-        $locustProcess->run(function ($type, $buffer) use ($output) {
+        $this->locustProcess->run(function ($type, $buffer) use ($output) {
             $output->write($buffer);
         });
 
         $endTime = microtime(true);
-        $locustDurationSeconds = $endTime - $locustProcess->getStartTime();
+        $locustDurationSeconds = $endTime - $this->locustProcess->getStartTime();
 
         $output->writeln(sprintf("Complete after %.0f seconds.", $locustDurationSeconds));
 
@@ -109,6 +111,18 @@ class RunCommand extends Command
         }
 
         return Command::SUCCESS;
+    }
+
+    public function getSubscribedSignals(): array
+    {
+        return [SIGINT];
+    }
+
+    public function handleSignal(int $signal): void
+    {
+        if ($signal === SIGINT && $this->locustProcess && $this->locustProcess->isRunning()) {
+            $this->locustProcess->stop();
+        }
     }
 
     private function getLocustCommandBasedOnExecutionMode(ExecutionMode $executionMode, string $workingDir) : array
